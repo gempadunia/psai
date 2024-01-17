@@ -71,16 +71,7 @@ var layer_GempaBMKG = new L.GeoJSON.AJAX("https://bmkg-content-inatews.storage.g
     }
 });
 layer_GempaBMKG.addTo(map);
-map.on('overlayadd', function (eventLayer) {
-    if (eventLayer.name === 'Gempa Terkini') {
-        map.addLayer(layer_GempaBMKG);
-    }
-});
-map.on('overlayremove', function (eventLayer) {
-    if (eventLayer.name === 'Gempa Terkini') {
-        map.removeLayer(layer_GempaBMKG);
-    }
-});
+
 
 
 
@@ -403,6 +394,23 @@ map.on('overlayremove', function (eventLayer) {
         map.on("layerremove", function(){
             resetLabels([layer_GempaBMKG, layer_MegathrustPuSGeN2017_7,layer_SesarTerindikasiAktif_8,layer_SesarAktifPuSGeN2017_9]);
         });
+
+
+
+map.removeLayer(layer_GempaBMKG);
+map.on('overlayadd', function (eventLayer) {
+    if (eventLayer.name === 'Gempa Terkini') {
+        map.addLayer(layer_GempaBMKG);
+    }
+});
+
+map.on('overlayremove', function (eventLayer) {
+    if (eventLayer.name === 'Gempa Terkini') {
+        map.removeLayer(layer_GempaBMKG);
+    }
+});
+
+            
         </script>
     </body>
 </html>
