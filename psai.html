@@ -51,6 +51,9 @@
 
 
 
+            
+
+
 map.createPane('pane_GempaBMKG');
 map.getPane('pane_GempaBMKG').style.zIndex = 410;
 var layer_GempaBMKG = new L.GeoJSON.AJAX("https://bmkg-content-inatews.storage.googleapis.com/gempaQL.json", {
@@ -67,13 +70,24 @@ var layer_GempaBMKG = new L.GeoJSON.AJAX("https://bmkg-content-inatews.storage.g
         layer.bindPopup(popupContent);
     }
 });
-map.on('click', function() {
 layer_GempaBMKG.addTo(map);
-map.off('click');
+map.on('overlayadd', function (eventLayer) {
+    if (eventLayer.name === 'Gempa Terkini') {
+        map.addLayer(layer_GempaBMKG);
+    }
+});
+map.on('overlayremove', function (eventLayer) {
+    if (eventLayer.name === 'Gempa Terkini') {
+        map.removeLayer(layer_GempaBMKG);
+    }
 });
 
 
 
+
+
+
+            
 
         var hash = new L.Hash(map);
         map.attributionControl.setPrefix('<a href="https://sociabuzz.com/gempadunia/tribe" target="_blank">Dukung gempa.dunia</a> &middot; <a href="https://gempa.de" target="_blank">Gempa.de</a> &middot; <a href="https://www.openstreetmap.org/">OpenStreetMap</a>  &middot; <a href="https://www.gmrt.org/">GMRT</a>');
