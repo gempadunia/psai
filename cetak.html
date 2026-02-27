@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGIS Sesar, Megathrust & Gempa BMKG</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Tailwind CSS untuk Styling UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Pustaka untuk Ekspor Gambar -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <!-- =========================================================================================
+         PEMANGGILAN FILE DATA (GEOJSON SEBAGAI SCRIPT)
+         PENTING: Buka file .js Anda dengan Notepad/VS Code dan pastikan nama variabelnya UNIK.
+         Contoh Sesar.js -> var json_SesarAktif = { ... };
+         Contoh Megathrust.js -> var json_Megathrust = { ... };
+    ========================================================================================== -->
+    <script src="Sesar.js"></script>
+    <script src="Megathrust.js"></script>
+    <!-- ========================================================================================= -->
+
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f3f4f6;
+        }
+        #map {
+            height: 100vh;
+            width: 100vw;
+            z-index: 1;
+        }
+        /* Custom scrollbar untuk popup agar rapi jika datanya banyak */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 5px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+        .leaflet-popup-content {
+            margin: 14px;
+            font-size: 13px;
+        }
+        .popup-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 4px;
+        }
+        .popup-table th, .popup-table td {
+            border: 1px solid #e5e7eb;
+            padding: 7px 10px;
+            text-align: left;
+            vertical-align: top;
+            word-break: break-word;
+        }
+        .popup-table th {
+            background-color: #f9fafb;
+            font-weight: 600;
+            color: #4b5563;
+            width: 35%;
+        }
+        .popup-table tr:nth-child(even) {
+            background-color: #fcfcfc;
+        }
+        .leaflet-control-layers {
+            border: none !important;
+            border-radius: 8px !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+            padding: 6px;
+        }
+        @keyframes pulse-blue {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(14, 165, 233, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); }
+        }
+        .gps-marker {
+            width: 16px;
+            height: 16px;
+            background-color: #0ea5e9;
+            border: 2px solid white;
+            border-radius: 50%;
+            animation: pulse-blue 2s infinite;
+        }
+    </style>
+</head>
+<body class="overflow-hidden">
+
+    <!-- Kontainer Map (html2canvas hanya akan merekam div ini) -->
+    <div id="map"></div>
+
+    <!-- SEMUA UI OVERLAY BERADA DI LUAR MAP (Tidak akan ikut terekam saat di-print) -->
+    
+    <!-- Tombol Cetak di Pojok Kanan Atas -->
+    <div class="absolute top-4 right-4 z-[2000] flex flex-col gap-2">
+        <button id="btn-print" class="bg-white hover:bg-gray-100 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-lg border border-gray-200 flex items-center gap-2 transition-all active:scale-95">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span>Cetak JPG (300 DPI)</span>
+        </button>
+    </div>
+
+    <!-- Overlay Loading Saat Cetak -->
+    <div id="print-loading" class="fixed inset-0 z-[3000] bg-black bg-opacity-60 flex items-center justify-center hidden">
+        <div class="bg-white p-6 rounded-xl shadow-2xl flex flex-col items-center gap-4">
+            <div class="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <div class="text-center">
+                <p class="font-bold text-gray-800 text-lg">Memproses Gambar...</p>
+                <p class="text-sm text-gray-500 mt-1">Resolusi Tinggi (300 DPI) membutuhkan waktu lebih lama.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Peringatan Modal -->
+    <div id="error-modal" class="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-60 hidden transition-opacity">
+        <div class="bg-white rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl transform scale-100">
+            <div class="flex items-center mb-3">
+                <svg class="w-6 h-6 text-red-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <h3 class="text-lg font-bold text-gray-900">Pemberitahuan</h3>
+            </div>
+            <p id="error-message" class="text-sm text-gray-600 mb-5 leading-relaxed">Pesan error di sini.</p>
+            <button onclick="closeErrorModal()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                Tutup
+            </button>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <script>
+        // --- DETEKSI VARIABEL OTOMATIS YANG LEBIH LUAS ---
+        const getSesarData = () => {
+            if (typeof json_SesarAktifPuSGeN2017_9 !== 'undefined') return json_SesarAktifPuSGeN2017_9;
+            if (typeof json_SesarAktif !== 'undefined') return json_SesarAktif;
+            if (typeof json_Sesar !== 'undefined') return json_Sesar;
+            if (typeof Sesar !== 'undefined') return Sesar;
+            if (typeof sesar !== 'undefined') return sesar;
+            return null;
+        };
+
+        const getMegaData = () => {
+            if (typeof json_MegathrustPuSGeN2017_7 !== 'undefined') return json_MegathrustPuSGeN2017_7;
+            if (typeof json_Megathrust !== 'undefined') return json_Megathrust;
+            if (typeof Megathrust !== 'undefined') return Megathrust;
+            if (typeof megathrust !== 'undefined') return megathrust;
+            return null;
+        };
+
+        const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([-2.5489, 118.0149], 5);
+
+        // Layer Groups
+        const sesarLayer = L.featureGroup().addTo(map); 
+        const megathrustLayer = L.featureGroup().addTo(map); 
+        const gempaLayer = L.featureGroup();
+
+        // Basemaps
+        const googleSat = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { attribution: '&copy; Google', maxZoom: 20, crossOrigin: true }).addTo(map);
+        const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; CARTO', crossOrigin: true });
+        const googleTerrain = L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', { attribution: '&copy; Google', crossOrigin: true });
+
+        const baseMaps = { "Google Satellite": googleSat, "Peta Terang": cartoLight, "Google Terrain": googleTerrain };
+        const overlayMaps = { "Garis Sesar Aktif": sesarLayer, "Zona Megathrust": megathrustLayer, "Gempa Terkini (BMKG)": gempaLayer };
+
+        // Controls
+        L.control.layers(baseMaps, overlayMaps, { position: 'topleft', collapsed: false }).addTo(map);
+        L.control.zoom({ position: 'topleft' }).addTo(map);
+
+        // Kontrol GPS Kustom
+        L.Control.GPS = L.Control.extend({
+            onAdd: function(map) {
+                var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+                var button = L.DomUtil.create('a', 'leaflet-control-gps', container);
+                button.href = '#'; button.title = 'Lokasi Saya';
+                button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px; margin: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg>`;
+                L.DomEvent.on(button, 'click', function(e) { L.DomEvent.stopPropagation(e); L.DomEvent.preventDefault(e); locateUser(button); });
+                return container;
+            }
+        });
+        new L.Control.GPS({ position: 'topleft' }).addTo(map);
+
+        // Kontrol Refresh Gempa
+        L.Control.Refresh = L.Control.extend({
+            onAdd: function(map) {
+                var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+                var button = L.DomUtil.create('a', 'leaflet-control-refresh', container);
+                button.href = '#'; button.title = 'Muat Ulang Gempa';
+                button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px; margin: 6px;"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`;
+                L.DomEvent.on(button, 'click', function(e) { L.DomEvent.stopPropagation(e); L.DomEvent.preventDefault(e); fetchGempaBMKG(); });
+                return container;
+            }
+        });
+        new L.Control.Refresh({ position: 'topleft' }).addTo(map);
+
+        let userMarker = null;
+        function locateUser(btn) {
+            if (!navigator.geolocation) return showErrorModal("GPS tidak didukung.");
+            btn.style.opacity = '0.5';
+            navigator.geolocation.getCurrentPosition((pos) => {
+                const lat = pos.coords.latitude, lng = pos.coords.longitude;
+                if (userMarker) map.removeLayer(userMarker);
+                userMarker = L.marker([lat, lng], { 
+                    icon: L.divIcon({ className: '', html: '<div class="gps-marker"></div>', iconSize: [16, 16], iconAnchor: [8, 8] })
+                }).addTo(map);
+                userMarker.bindPopup('<div class="font-bold text-center">Lokasi Anda</div>').openPopup();
+                map.flyTo([lat, lng], 10);
+                btn.style.opacity = '1';
+            }, () => { btn.style.opacity = '1'; showErrorModal("Gagal akses lokasi."); });
+        }
+
+        // --- POPUP LOGIC ---
+        function onEachFeatureStructure(feature, layer) {
+            if (feature.properties) {
+                const props = feature.properties;
+                
+                // Cari Nama dan Segmen
+                let struktur = props.Struktur || props.Name || props.Nama || props.Segment || "Struktur Tidak Bernama";
+                let segment = props.Segment || props.Segmen || props.Zone || props.Zona || "-";
+                
+                // Cari Magnitudo (Mmax)
+                let mmax = props.MMax || props.Mmaks || props.Mmax || props.Mag || props.Magnitude || null;
+                let mmaxDisplay = null;
+                let mmaxColorClass = "bg-gray-500 text-white"; 
+
+                if (mmax) {
+                    let match = mmax.toString().match(/(\d+(\.\d+)?)/);
+                    if (match) {
+                        let num = parseFloat(match[0]);
+                        mmaxDisplay = `M${num.toFixed(1)}`;
+                        if (num <= 6.0) mmaxColorClass = "bg-green-600 text-white";
+                        else if (num <= 6.5) mmaxColorClass = "bg-yellow-400 text-black"; 
+                        else if (num <= 7.0) mmaxColorClass = "bg-orange-500 text-white";
+                        else if (num <= 7.5) mmaxColorClass = "bg-red-600 text-white";
+                        else if (num <= 8.0) mmaxColorClass = "bg-red-900 text-white"; 
+                        else mmaxColorClass = "bg-black text-white";
+                    } else { mmaxDisplay = mmax; }
+                }
+
+                // --- DATA SPESIFIK: GERAK, PANJANG, SLIP RATE, SKENARIO ---
+                let gerak = props.Gerak || props.Type || "-";
+                
+                // Panjang dengan tambahan "kilometer"
+                let panjangRaw = props.Panjang || props['Length (km)'];
+                let panjang = "-";
+                if (panjangRaw) {
+                    let pStr = panjangRaw.toString().toLowerCase();
+                    if (pStr.includes('km') || pStr.includes('kilometer')) {
+                        panjang = panjangRaw;
+                    } else {
+                        panjang = panjangRaw + " kilometer";
+                    }
+                }
+
+                // Slip Rate dengan tambahan "mm/tahun"
+                let sliprateRaw = props.Sliprate || props.SlipRate || props['Sliprate (mm/yr)'];
+                let sliprate = "-";
+                if (sliprateRaw) {
+                    let sStr = sliprateRaw.toString().toLowerCase();
+                    if (sStr.includes('mm')) {
+                        sliprate = sliprateRaw;
+                    } else {
+                        sliprate = sliprateRaw + " mm/tahun";
+                    }
+                }
+
+                let skenario = props.Skenario || "-";
+
+                let popupContent = `
+                    <div class="mb-2 pb-2 border-b border-gray-200">
+                        <div class="font-bold text-red-600 text-lg leading-tight mb-2">${struktur}</div>
+                        <div class="flex items-center mt-1">
+                            ${mmaxDisplay ? `<span class="${mmaxColorClass} font-bold px-3 py-1.5 rounded text-sm shadow-sm">${mmaxDisplay}</span>` : ''}
+                            <span class="text-black text-base font-medium ml-3 leading-tight">${segment}</span>
+                        </div>
+                    </div>
+                    <div class="max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                        <table class="popup-table text-sm">
+                            <tbody>
+                                <tr><th>Gerak</th><td>${gerak}</td></tr>
+                                <tr><th>Panjang</th><td>${panjang}</td></tr>
+                                <tr><th>Slip Rate</th><td>${sliprate}</td></tr>
+                                <tr><th>Skenario</th><td>${skenario}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+                layer.bindPopup(popupContent, { maxWidth: 350, minWidth: 260 });
+            }
+        }
+
+        const lineStyle = { color: "#dc2626", weight: 5, opacity: 1 };
+        const polygonStyle = { color: "#c2410c", weight: 2, opacity: 0.9, fillColor: "#fdba74", fillOpacity: 0.4, dashArray: "5 5" };
+
+        // --- LOAD DATA ---
+        function loadData() {
+            const dataSesar = getSesarData();
+            const dataMega = getMegaData();
+            let bounds = L.latLngBounds();
+            let hasBounds = false;
+
+            sesarLayer.clearLayers();
+            megathrustLayer.clearLayers();
+
+            // Memastikan Sesar dirender di atas Megathrust menggunakan fungsi bawaan Leaflet
+            if (dataMega) {
+                const layer = L.geoJSON(dataMega, { style: polygonStyle, onEachFeature: onEachFeatureStructure }).addTo(megathrustLayer);
+                megathrustLayer.bringToBack(); // Dorong ke belakang agar area bisa diklik dengan baik
+                bounds.extend(layer.getBounds());
+                hasBounds = true;
+            }
+
+            if (dataSesar) {
+                const layer = L.geoJSON(dataSesar, { style: lineStyle, onEachFeature: onEachFeatureStructure }).addTo(sesarLayer);
+                sesarLayer.bringToFront(); // Bawa ke depan agar menimpa area megathrust
+                bounds.extend(layer.getBounds());
+                hasBounds = true;
+            }
+            
+            if (hasBounds) map.fitBounds(bounds, { padding: [20, 20] });
+        }
+
+        // --- GEMPA BMKG ---
+        async function fetchGempaBMKG() {
+            gempaLayer.clearLayers();
+            try {
+                const res = await fetch('https://bmkg-content-inatews.storage.googleapis.com/gempaQL.json', { cache: "no-store" });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data && data.features) {
+                    data.features.forEach(f => {
+                        const coords = f.geometry.coordinates; 
+                        const p = f.properties;
+                        const mag = parseFloat(p.mag), depth = parseFloat(p.depth);
+                        const lon = parseFloat(coords[0]), lat = parseFloat(coords[1]);
+                        
+                        let timeDisplay = p.time ? p.time.replace(/\.\d+/, '').trim() : '';
+                        let parts = timeDisplay.match(/(\d{4})[\/\-](\d{2})[\/\-](\d{2})[T\s](\d{2}):(\d{2}):(\d{2})/);
+                        if (parts) {
+                            let dObj = new Date(Date.UTC(parseInt(parts[1]), parseInt(parts[2])-1, parseInt(parts[3]), parseInt(parts[4]), parseInt(parts[5]), parseInt(parts[6])));
+                            dObj.setTime(dObj.getTime() + (7*60*60*1000));
+                            timeDisplay = `${dObj.getUTCFullYear()}-${String(dObj.getUTCMonth()+1).padStart(2,'0')}-${String(dObj.getUTCDate()).padStart(2,'0')} ${String(dObj.getUTCHours()).padStart(2,'0')}:${String(dObj.getUTCMinutes()).padStart(2,'0')}:${String(dObj.getUTCSeconds()).padStart(2,'0')} WIB`;
+                        }
+
+                        const marker = L.circleMarker([lat, lon], {
+                            radius: mag * 4.5,
+                            fillColor: depth < 50 ? "#dc2626" : (depth < 150 ? "#facc15" : (depth < 300 ? "#22c55e" : "#2563eb")),
+                            color: "#ffffff", weight: 1.5, opacity: 1, fillOpacity: 0.8
+                        }).bindPopup(`
+                            <div class="mb-2 border-b border-gray-200 pb-2">
+                                <div class="flex items-baseline space-x-2 mb-1">
+                                    <span class="font-extrabold text-red-600 text-lg whitespace-nowrap">M${mag.toFixed(1)}</span>
+                                    <span class="text-xs text-gray-500 font-semibold whitespace-nowrap">Kedalaman ${depth.toFixed(1)} km</span>
+                                </div>
+                                <div class="text-xs text-gray-800 font-medium mt-1 break-words">${p.place || ''}</div>
+                            </div>
+                            <table class="popup-table text-xs"><tbody><tr><th>Waktu</th><td>${timeDisplay}</td></tr></tbody></table>
+                        `).addTo(gempaLayer);
+                        
+                        gempaLayer.bringToFront(); // Pastikan Gempa selalu di lapis paling atas
+                    });
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        // --- FUNGSI PRINT JPG (300 DPI) ---
+        async function printMapAsJPG() {
+            const loading = document.getElementById('print-loading');
+            loading.classList.remove('hidden');
+
+            // Beri jeda 100ms agar UI loading sempat muncul sebelum CPU difreeze oleh html2canvas
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            try {
+                // Sembunyikan kontrol UI Leaflet secara sementara
+                const controlContainer = document.querySelector('.leaflet-control-container');
+                if(controlContainer) controlContainer.style.display = 'none';
+
+                // Target Perekaman: HANYA div ber-ID "map" (Bukan document.body)
+                // Ini memastikan modal "Memproses Gambar" tidak mungkin ikut terekam.
+                const mapElement = document.getElementById('map');
+                const canvas = await html2canvas(mapElement, {
+                    useCORS: true,           
+                    allowTaint: false,
+                    scale: 3.125, // Skala untuk mencapai 300 DPI
+                    backgroundColor: null,
+                    logging: false
+                });
+
+                // Tampilkan kembali kontrol
+                if(controlContainer) controlContainer.style.display = '';
+
+                // Download JPG
+                const link = document.createElement('a');
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                link.download = `WebGIS-Sesar-${timestamp}.jpg`;
+                link.href = canvas.toDataURL("image/jpeg", 0.95); 
+                link.click();
+
+            } catch (error) {
+                console.error("Gagal mencetak peta:", error);
+                showErrorModal("Gagal mengekspor gambar. Pastikan koneksi internet stabil.");
+            } finally {
+                loading.classList.add('hidden');
+            }
+        }
+
+        document.getElementById('btn-print').addEventListener('click', printMapAsJPG);
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            fetchGempaBMKG();
+        });
+
+        function showErrorModal(m) {
+            document.getElementById('error-message').innerText = m;
+            document.getElementById('error-modal').classList.remove('hidden');
+        }
+        function closeErrorModal() {
+            document.getElementById('error-modal').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
