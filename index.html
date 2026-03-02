@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Peta Sesar Aktif Indonesia</title>
+    <title>WebGIS Sesar, Megathrust & Gempa BMKG</title>
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
@@ -19,6 +19,14 @@
     ========================================================================================== -->
     <script src="Sesar.js"></script>
     <script src="Megathrust.js"></script>
+    
+    <!-- File Slab Kontur Kedalaman -->
+    <script src="hal.js"></script>
+    <script src="cot.js"></script>
+    <script src="sul.js"></script>
+    <script src="png.js"></script>
+    <script src="sum.js"></script>
+    <script src="phi.js"></script>
     <!-- ========================================================================================= -->
 
     <style>
@@ -137,12 +145,34 @@
             return null;
         };
 
-        const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([-2.5489, 118.0149], 5);
+        // Hapus 'preferCanvas: true' agar peta kembali menggunakan mode SVG
+        const map = L.map('map', { zoomControl: false }).setView([-2.5489, 118.0149], 5);
 
-        // Layer Groups
-        const sesarLayer = L.featureGroup().addTo(map); 
-        const megathrustLayer = L.featureGroup().addTo(map); 
-        const gempaLayer = L.featureGroup();
+        // Layer Groups untuk Sesar, Megathrust, dan Gempa
+        const sesarLayer = L.featureGroup().addTo(map); // Default ON
+        const megathrustLayer = L.featureGroup().addTo(map); // Default ON
+        const gempaLayer = L.featureGroup(); // Default OFF
+        const inatewsLayer = L.featureGroup(); // Default OFF
+
+        // Layer Groups untuk 6 Kontur Slab (Semua Default OFF karena tidak ada .addTo(map))
+        const slabHalLayer = L.featureGroup();
+        const slabCotLayer = L.featureGroup();
+        const slabSulLayer = L.featureGroup();
+        const slabPngLayer = L.featureGroup();
+        const slabSumLayer = L.featureGroup();
+        const slabPhiLayer = L.featureGroup();
+
+        // Panes (Urutan Tumpukan)
+        map.createPane('paneMegathrust');
+        map.getPane('paneMegathrust').style.zIndex = 400; 
+        map.createPane('paneSlab');
+        map.getPane('paneSlab').style.zIndex = 405; // Slab di atas Megathrust agar mudah diklik
+        map.createPane('paneSesar');
+        map.getPane('paneSesar').style.zIndex = 410; 
+        map.createPane('paneGempa');
+        map.getPane('paneGempa').style.zIndex = 420; 
+        map.createPane('paneGPS');
+        map.getPane('paneGPS').style.zIndex = 430; 
 
         // Basemaps
         const googleSat = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { attribution: '&copy; Google', maxZoom: 20, crossOrigin: true }).addTo(map);
@@ -150,13 +180,24 @@
         const googleTerrain = L.tileLayer('https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', { attribution: '&copy; Google', crossOrigin: true });
 
         const baseMaps = { "Google Satellite": googleSat, "Peta Terang": cartoLight, "Google Terrain": googleTerrain };
-        const overlayMaps = { "Garis Sesar Aktif": sesarLayer, "Zona Megathrust": megathrustLayer, "Gempa Terkini (BMKG)": gempaLayer };
+        const overlayMaps = { 
+            "Garis Sesar Aktif": sesarLayer, 
+            "Zona Megathrust": megathrustLayer, 
+            "Gempa Terkini (BMKG)": gempaLayer,
+            "BMKG InaTEWS": inatewsLayer,
+            "Slab Halmahera": slabHalLayer,
+            "Slab Cotabato": slabCotLayer,
+            "Slab Sulawesi": slabSulLayer,
+            "Slab New Guinea": slabPngLayer,
+            "Slab Sumatra-Jawa": slabSumLayer,
+            "Slab Filipina": slabPhiLayer
+        };
 
         // Controls
         L.control.layers(baseMaps, overlayMaps, { position: 'topleft', collapsed: true }).addTo(map);
         L.control.zoom({ position: 'topleft' }).addTo(map);
 
-        // Kontrol GPS Kustom (Desain diperbaiki agar tidak ada celah)
+        // Kontrol GPS Kustom
         L.Control.GPS = L.Control.extend({
             onAdd: function(map) {
                 var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
@@ -183,7 +224,8 @@
                 const lat = pos.coords.latitude, lng = pos.coords.longitude;
                 if (userMarker) map.removeLayer(userMarker);
                 userMarker = L.marker([lat, lng], { 
-                    icon: L.divIcon({ className: '', html: '<div class="gps-marker"></div>', iconSize: [16, 16], iconAnchor: [8, 8] })
+                    icon: L.divIcon({ className: '', html: '<div class="gps-marker"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+                    pane: 'paneGPS'
                 }).addTo(map);
                 userMarker.bindPopup('<div class="font-bold text-center">Lokasi Anda</div>').openPopup();
                 map.flyTo([lat, lng], 10);
@@ -191,16 +233,58 @@
             }, () => { btn.style.opacity = '1'; showErrorModal("Gagal akses lokasi."); });
         }
 
-        // --- POPUP LOGIC ---
+        // --- WARNA KONTUR SLAB BERDASARKAN KEDALAMAN ---
+        function getSlabColor(depthValue) {
+            let depth = parseFloat(depthValue);
+            if (isNaN(depth)) return "#808080"; 
+            
+            if (depth < 20) depth = 20;
+            if (depth > 600) depth = 600;
+
+            let percentage = (depth - 20) / (600 - 20);
+            let hue = Math.round(percentage * 240);
+            
+            return `hsl(${hue}, 100%, 50%)`;
+        }
+
+        function styleSlab(feature) {
+            let depth = feature.properties.DEPTH || feature.properties.depth || 0;
+            return {
+                color: getSlabColor(depth),
+                weight: 5, // Dipertebal dari 2 menjadi 5 agar sangat mudah diklik
+                opacity: 0.9,
+                lineCap: 'round',
+                lineJoin: 'round'
+            };
+        }
+
+        function onEachFeatureSlab(feature, layer) {
+            if (feature.properties) {
+                let depth = feature.properties.DEPTH || feature.properties.depth || "-";
+                let region = feature.properties.REGION || feature.properties.region || "Area Slab";
+
+                let popupContent = `
+                    <div class="mb-2 pb-2 border-b border-gray-200">
+                        <div class="font-bold text-blue-700 text-base leading-tight">Kontur Slab ${region}</div>
+                    </div>
+                    <table class="popup-table text-sm">
+                        <tbody>
+                            <tr><th>Kedalaman</th><td>${depth} km</td></tr>
+                        </tbody>
+                    </table>
+                `;
+                layer.bindPopup(popupContent, { maxWidth: 300 });
+            }
+        }
+
+        // --- POPUP LOGIC SESAR & MEGATHRUST ---
         function onEachFeatureStructure(feature, layer) {
             if (feature.properties) {
                 const props = feature.properties;
                 
-                // Cari Nama dan Segmen
                 let struktur = props.Struktur || props.Name || props.Nama || props.Segment || "Struktur Tidak Bernama";
                 let segment = props.Segment || props.Segmen || props.Zone || props.Zona || "-";
                 
-                // Cari Magnitudo (Mmax)
                 let mmax = props.MMax || props.Mmaks || props.Mmax || props.Mag || props.Magnitude || null;
                 let mmaxDisplay = null;
                 let mmaxColorClass = "bg-gray-500 text-white"; 
@@ -219,10 +303,8 @@
                     } else { mmaxDisplay = mmax; }
                 }
 
-                // --- DATA SPESIFIK: GERAK, PANJANG, SLIP RATE, SKENARIO ---
                 let gerak = props.Gerak || props.Type || "-";
                 
-                // Panjang dengan tambahan "kilometer"
                 let panjangRaw = props.Panjang || props['Length (km)'];
                 let panjang = "-";
                 if (panjangRaw) {
@@ -234,7 +316,6 @@
                     }
                 }
 
-                // Slip Rate dengan tambahan "mm/tahun"
                 let sliprateRaw = props.Sliprate || props.SlipRate || props['Sliprate (mm/yr)'];
                 let sliprate = "-";
                 if (sliprateRaw) {
@@ -276,25 +357,48 @@
 
         // --- LOAD DATA ---
         function loadData() {
+            // Ambil data utama
             const dataSesar = getSesarData();
             const dataMega = getMegaData();
+            
+            // Ambil data slab masing-masing
+            const dataHal = typeof json_hal !== 'undefined' ? json_hal : (typeof hal !== 'undefined' ? hal : null);
+            const dataCot = typeof json_cot !== 'undefined' ? json_cot : (typeof cot !== 'undefined' ? cot : null);
+            const dataSul = typeof json_sul !== 'undefined' ? json_sul : (typeof sul !== 'undefined' ? sul : null);
+            const dataPng = typeof json_png !== 'undefined' ? json_png : (typeof png !== 'undefined' ? png : null);
+            const dataSum = typeof json_sum !== 'undefined' ? json_sum : (typeof sum !== 'undefined' ? sum : null);
+            const dataPhi = typeof json_phi !== 'undefined' ? json_phi : (typeof phi !== 'undefined' ? phi : null);
+            
             let bounds = L.latLngBounds();
             let hasBounds = false;
 
+            // Bersihkan semua layer
             sesarLayer.clearLayers();
             megathrustLayer.clearLayers();
+            slabHalLayer.clearLayers();
+            slabCotLayer.clearLayers();
+            slabSulLayer.clearLayers();
+            slabPngLayer.clearLayers();
+            slabSumLayer.clearLayers();
+            slabPhiLayer.clearLayers();
 
-            // Memastikan Sesar dirender di atas Megathrust menggunakan fungsi bawaan Leaflet
+            // Render ke layer masing-masing (tanpa fit bounds agar fokus peta tidak terlalu jauh)
+            if (dataHal) L.geoJSON(dataHal, { style: styleSlab, onEachFeature: onEachFeatureSlab, pane: 'paneSlab' }).addTo(slabHalLayer);
+            if (dataCot) L.geoJSON(dataCot, { style: styleSlab, onEachFeature: onEachFeatureSlab, pane: 'paneSlab' }).addTo(slabCotLayer);
+            if (dataSul) L.geoJSON(dataSul, { style: styleSlab, onEachFeature: onEachFeatureSlab, pane: 'paneSlab' }).addTo(slabSulLayer);
+            if (dataPng) L.geoJSON(dataPng, { style: styleSlab, onEachFeature: onEachFeatureSlab, pane: 'paneSlab' }).addTo(slabPngLayer);
+            if (dataSum) L.geoJSON(dataSum, { style: styleSlab, onEachFeature: onEachFeatureSlab, pane: 'paneSlab' }).addTo(slabSumLayer);
+            if (dataPhi) L.geoJSON(dataPhi, { style: styleSlab, onEachFeature: onEachFeatureSlab, pane: 'paneSlab' }).addTo(slabPhiLayer);
+
+            // Render Megathrust dan Sesar, dan set batas kamera (Fit Bounds) hanya untuk dua ini
             if (dataMega) {
-                const layer = L.geoJSON(dataMega, { style: polygonStyle, onEachFeature: onEachFeatureStructure }).addTo(megathrustLayer);
-                megathrustLayer.bringToBack(); 
+                const layer = L.geoJSON(dataMega, { style: polygonStyle, onEachFeature: onEachFeatureStructure, pane: 'paneMegathrust' }).addTo(megathrustLayer);
                 bounds.extend(layer.getBounds());
                 hasBounds = true;
             }
 
             if (dataSesar) {
-                const layer = L.geoJSON(dataSesar, { style: lineStyle, onEachFeature: onEachFeatureStructure }).addTo(sesarLayer);
-                sesarLayer.bringToFront(); 
+                const layer = L.geoJSON(dataSesar, { style: lineStyle, onEachFeature: onEachFeatureStructure, pane: 'paneSesar' }).addTo(sesarLayer);
                 bounds.extend(layer.getBounds());
                 hasBounds = true;
             }
@@ -327,7 +431,7 @@
                         const marker = L.circleMarker([lat, lon], {
                             radius: mag * 4.5,
                             fillColor: depth < 50 ? "#dc2626" : (depth < 150 ? "#facc15" : (depth < 300 ? "#22c55e" : "#2563eb")),
-                            color: "#ffffff", weight: 1.5, opacity: 1, fillOpacity: 0.8
+                            color: "#ffffff", weight: 1.5, opacity: 1, fillOpacity: 0.8, pane: 'paneGempa'
                         }).bindPopup(`
                             <div class="mb-2 border-b border-gray-200 pb-2">
                                 <div class="flex items-baseline space-x-2 mb-1">
@@ -338,16 +442,114 @@
                             </div>
                             <table class="popup-table text-xs"><tbody><tr><th>Waktu</th><td>${timeDisplay}</td></tr></tbody></table>
                         `).addTo(gempaLayer);
-                        
-                        gempaLayer.bringToFront(); 
                     });
                 }
             } catch (e) { console.error(e); }
         }
 
+        // --- GEMPA BMKG (XML INATEWS) ---
+        async function fetchBMKGInaTEWS() {
+            inatewsLayer.clearLayers();
+            try {
+                const res = await fetch('https://bmkg-content-inatews.storage.googleapis.com/live30event.xml', { cache: "no-store" });
+                if (!res.ok) return;
+                const text = await res.text();
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(text, "text/xml");
+                
+                const gempaNodes = xmlDoc.getElementsByTagName("gempa");
+                
+                for (let i = 0; i < gempaNodes.length; i++) {
+                    const node = gempaNodes[i];
+                    
+                    const getVal = (tags) => {
+                        for(let tag of tags) {
+                            let el = node.getElementsByTagName(tag)[0];
+                            if(el && el.textContent) return el.textContent.trim();
+                            el = node.getElementsByTagName(tag.toLowerCase())[0] || node.getElementsByTagName(tag.toUpperCase())[0];
+                            if(el && el.textContent) return el.textContent.trim();
+                        }
+                        return "";
+                    };
+
+                    let lat = NaN, lon = NaN;
+                    const pointStr = getVal(["Coordinates", "point"]);
+                    
+                    if (pointStr && pointStr.includes(',')) {
+                        let parts = pointStr.split(',');
+                        // PERBAIKAN: Menjamin Koordinat Tidak Terbalik (Bujur/Lintang)
+                        let val0 = parseFloat(parts[0]);
+                        let val1 = parseFloat(parts[1]);
+                        // Mengingat Indonesia: Longitude selalu puluhan/ratusan, Latitude selalu belasan/satuan
+                        if (Math.abs(val0) > Math.abs(val1)) {
+                            lon = val0;
+                            lat = val1;
+                        } else {
+                            lat = val0;
+                            lon = val1;
+                        }
+                    } else {
+                        let latStr = getVal(["Lintang", "lat"]);
+                        let lonStr = getVal(["Bujur", "lon"]);
+                        if (latStr && lonStr) {
+                            lat = parseFloat(latStr.replace(/[^0-9.-]/g, ''));
+                            if (latStr.toUpperCase().includes('LS')) lat = -Math.abs(lat);
+                            lon = parseFloat(lonStr.replace(/[^0-9.-]/g, ''));
+                            if (lonStr.toUpperCase().includes('BB')) lon = -Math.abs(lon);
+                        }
+                    }
+
+                    if (isNaN(lat) || isNaN(lon)) continue;
+
+                    let magStr = getVal(["Magnitude", "mag"]);
+                    let mag = parseFloat(magStr.replace(/[^0-9.]/g, '')) || 0;
+
+                    let depthStr = getVal(["Kedalaman", "depth", "dalam", "Dalam"]);
+                    let depth = parseFloat(depthStr.replace(/[^0-9.]/g, '')) || 0;
+                    
+                    let area = getVal(["Wilayah", "area", "place"]) || "-";
+                    
+                    // PERBAIKAN: Pembacaan Tanggal dan Jam yang Lebih Kebal
+                    let tgl = getVal(["Tanggal", "tanggal", "date", "Date"]);
+                    let jam = getVal(["Jam", "jam", "time", "Time"]);
+                    let timeDisplay = "";
+                    
+                    if (tgl || jam) {
+                        timeDisplay = `${tgl} ${jam}`.trim();
+                    } else {
+                        // Coba baca format tag baru jika Tanggal/Jam gagal (Misal: <DateTime> atau <waktu>)
+                        timeDisplay = getVal(["DateTime", "datetime", "waktu", "Waktu"]) || "Tidak diketahui";
+                    }
+                    
+                    let potensi = getVal(["Potensi"]) || "";
+
+                    const marker = L.circleMarker([lat, lon], {
+                        radius: mag * 4.5,
+                        fillColor: depth < 50 ? "#dc2626" : (depth < 150 ? "#facc15" : (depth < 300 ? "#22c55e" : "#2563eb")),
+                        color: "#ffffff", weight: 1.5, opacity: 1, fillOpacity: 0.8, pane: 'paneGempa'
+                    }).bindPopup(`
+                        <div class="mb-2 border-b border-gray-200 pb-2">
+                            <div class="flex items-baseline space-x-2 mb-1">
+                                <span class="font-extrabold text-red-600 text-lg whitespace-nowrap">M${mag.toFixed(1)}</span>
+                                <span class="text-xs text-gray-500 font-semibold whitespace-nowrap">Kedalaman ${depthStr || depth + ' km'}</span>
+                            </div>
+                            <div class="text-xs text-gray-800 font-medium mt-1 break-words">${area}</div>
+                        </div>
+                        <table class="popup-table text-xs">
+                            <tbody>
+                                <tr><th>Waktu</th><td>${timeDisplay}</td></tr>
+                                ${potensi ? `<tr><th>Potensi</th><td>${potensi}</td></tr>` : ''}
+                            </tbody>
+                        </table>
+                    `).addTo(inatewsLayer);
+                }
+            } catch (e) { console.error("Gagal memuat XML InaTEWS", e); }
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
             loadData();
             fetchGempaBMKG();
+            fetchBMKGInaTEWS();
         });
 
         function showErrorModal(m) {
